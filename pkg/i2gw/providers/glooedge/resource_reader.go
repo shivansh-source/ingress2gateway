@@ -67,7 +67,7 @@ func (r *resourceReader) readResourcesFromCluster(ctx context.Context) (*storage
 
 func (r *resourceReader) readResourcesFromFile(reader io.Reader) (*storage, error) {
 	storage := newResourcesStorage()
-	allResources, err := common.ExtractObjectsFromReader(reader, "")
+	allResources, err := common.ExtractObjectsFromReader(reader, r.conf.Namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -255,9 +255,6 @@ func unstructuredToUpstream(u *unstructured.Unstructured, defaultNamespace strin
 // readUpstreamsFromCluster reads Upstream resources from cluster
 // TODO: Implement cluster reading for Upstreams using dynamic client
 // https://github.com/kgateway-dev/ingress2gateway/issues/112
-func readUpstreamsFromCluster(ctx context.Context, client interface{}) ([]*Upstream, error) {
-	// TODO: Implement cluster reading for Upstreams using dynamic client
-	// For now, return empty list as fallback
-	// This would use client.Resource(upstreamGVR).List(ctx, metav1.ListOptions{})
-	return []*Upstream{}, nil
+func readUpstreamsFromCluster(_ context.Context, _ interface{}) ([]*Upstream, error) {
+	return nil,fmt.Errorf("reading Upstreams from cluster is not implemented yet,see issue #112 for details")
 }

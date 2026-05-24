@@ -132,7 +132,7 @@ func basicRoutingFeature(storage *storage, ir *providerir.ProviderIR) field.Erro
 			}
 
 			// Convert routes to HTTPRoute rules
-			for _, route := range vs.Spec.VirtualHost.Routes {
+			for routeIndex, route := range vs.Spec.VirtualHost.Routes {
 				rule := gatewayv1.HTTPRouteRule{}
 
 				// Add path matches from Gloo Edge matchers
@@ -160,12 +160,12 @@ func basicRoutingFeature(storage *storage, ir *providerir.ProviderIR) field.Erro
 					// Resolve upstream from storage
 					upstream, exists := storage.Upstreams[upstreamKey]
 					if !exists {
-						// Fallback: create basic upstream reference with port 0
-						upstream = &Upstream{
-							Name:      route.RouteAction.Single.Upstream.Name,
-							Namespace: route.RouteAction.Single.Upstream.Namespace,
-							Port:      0,
-						}
+						path :=field.NewPath("virtualService").
+							Key(vs.Namespace + "/" + vs.Name).
+							Child("spec", "virtualHost", "routes").
+							Index(routeIndex).
+							Child("routeAction", "single", "upstream")
+						return append(errs, field.NotFound(path,upstreamKey.String()))
 					}
 
 					// Use resolved service details if available, otherwise fallback to upstream name
@@ -182,6 +182,13 @@ func basicRoutingFeature(storage *storage, ir *providerir.ProviderIR) field.Erro
 							backendNamespace = upstream.Namespace
 						}
 						backendPort = upstream.Port
+					}
+					
+					if backendPort == 0 {
+						path := field.NewPath("upstreams").
+							Key(upstream.Namespace + "/" + upstream.Name).
+							Child("spec", "kube", "servicePort")
+						return append(errs, field.Required(path, "upstream service port is required"))
 					}
 
 					backendRef := gatewayv1.HTTPBackendRef{

@@ -18,6 +18,7 @@ package glooedge
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -38,6 +39,7 @@ func Test_ToIR(t *testing.T) {
 	testCases := []struct {
 		name           string
 		virtualService *VirtualService
+		upstreams      []*Upstream
 		expectedIR     providerir.ProviderIR
 		expectedErrors field.ErrorList
 	}{
@@ -67,6 +69,11 @@ func Test_ToIR(t *testing.T) {
 					},
 				},
 			},
+			upstreams: []*Upstream{{
+				Name:      "my-service",
+				Namespace: "default",
+				Port:      80,
+			}},
 			expectedIR: providerir.ProviderIR{
 				Gateways: map[types.NamespacedName]providerir.GatewayContext{
 					{Namespace: "default", Name: "gloo-edge"}: {
@@ -108,7 +115,7 @@ func Test_ToIR(t *testing.T) {
 												BackendObjectReference: gatewayv1.BackendObjectReference{
 													Name:      "my-service",
 													Namespace: ptr.To(gatewayv1.Namespace("default")),
-													Port:      ptr.To(gatewayv1.PortNumber(0)),
+													Port:      ptr.To(gatewayv1.PortNumber(80)),
 												},
 											},
 										},
@@ -148,6 +155,13 @@ func Test_ToIR(t *testing.T) {
 					},
 				},
 			},
+			upstreams: []*Upstream{{
+				Name:             "my-service",
+				Namespace:        "default",
+				ServiceName:      "my-svc",
+				ServiceNamespace: "default",
+				ServicePort:      8080,
+			}},
 			expectedIR: providerir.ProviderIR{
 				Gateways: map[types.NamespacedName]providerir.GatewayContext{
 					{Namespace: "default", Name: "gloo-edge"}: {
@@ -229,6 +243,11 @@ func Test_ToIR(t *testing.T) {
 					},
 				},
 			},
+			upstreams: []*Upstream{{
+				Name:      "user-service",
+				Namespace: "production",
+				Port:      9090,
+			}},
 			expectedIR: providerir.ProviderIR{
 				Gateways: map[types.NamespacedName]providerir.GatewayContext{
 					{Namespace: "production", Name: "gloo-edge"}: {
@@ -270,7 +289,7 @@ func Test_ToIR(t *testing.T) {
 												BackendObjectReference: gatewayv1.BackendObjectReference{
 													Name:      "user-service",
 													Namespace: ptr.To(gatewayv1.Namespace("production")),
-													Port:      ptr.To(gatewayv1.PortNumber(0)), // Port is 0 since it's not discovered in this test
+													Port:      ptr.To(gatewayv1.PortNumber(9090)), 
 												},
 											},
 										},
@@ -324,6 +343,18 @@ func Test_ToIR(t *testing.T) {
 					},
 				},
 			},
+			upstreams: []*Upstream{
+				{
+					Name:      "api-v1",
+					Namespace: "default",
+					Port:      8080,
+				},
+				{
+					Name:      "api-v2",
+					Namespace: "default",
+					Port:      8081,
+				},
+			},
 			expectedIR: providerir.ProviderIR{
 				Gateways: map[types.NamespacedName]providerir.GatewayContext{
 					{Namespace: "default", Name: "gloo-edge"}: {
@@ -374,7 +405,7 @@ func Test_ToIR(t *testing.T) {
 													BackendObjectReference: gatewayv1.BackendObjectReference{
 														Name:      "api-v1",
 														Namespace: ptr.To(gatewayv1.Namespace("default")),
-														Port:      ptr.To(gatewayv1.PortNumber(0)),
+														Port:      ptr.To(gatewayv1.PortNumber(8080)),
 													},
 												},
 											},
@@ -393,7 +424,7 @@ func Test_ToIR(t *testing.T) {
 													BackendObjectReference: gatewayv1.BackendObjectReference{
 														Name:      "api-v2",
 														Namespace: ptr.To(gatewayv1.Namespace("default")),
-														Port:      ptr.To(gatewayv1.PortNumber(0)),
+														Port:      ptr.To(gatewayv1.PortNumber(8081)),
 													},
 												},
 											},
@@ -427,7 +458,7 @@ func Test_ToIR(t *testing.T) {
 													BackendObjectReference: gatewayv1.BackendObjectReference{
 														Name:      "api-v1",
 														Namespace: ptr.To(gatewayv1.Namespace("default")),
-														Port:      ptr.To(gatewayv1.PortNumber(0)),
+														Port:      ptr.To(gatewayv1.PortNumber(8080)),
 													},
 												},
 											},
@@ -446,7 +477,7 @@ func Test_ToIR(t *testing.T) {
 													BackendObjectReference: gatewayv1.BackendObjectReference{
 														Name:      "api-v2",
 														Namespace: ptr.To(gatewayv1.Namespace("default")),
-														Port:      ptr.To(gatewayv1.PortNumber(0)),
+														Port:      ptr.To(gatewayv1.PortNumber(8081)),
 													},
 												},
 											},
@@ -469,18 +500,10 @@ func Test_ToIR(t *testing.T) {
 			geProvider := provider.(*Provider)
 			// Create storage and add the VirtualService
 			geProvider.storage.addVirtualService(tc.virtualService)
-			// ADD: Seed upstreams for tests that expect resolved services
-			if tc.name == "VirtualService with discovered upstream" {
-				geProvider.storage.addUpstream(&Upstream{
-					Name:             "my-service",
-					Namespace:        "default",
-					ServiceName:      "my-svc",
-					ServiceNamespace: "default",
-					ServicePort:      8080,
-				})
+			for _, upstream := range tc.upstreams {
+				geProvider.storage.addUpstream(upstream)
 			}
 			ir, errs := provider.ToIR()
-
 			// Validate error count
 			if len(errs) != len(tc.expectedErrors) {
 				t.Errorf("Expected %d errors, got %d: %+v", len(tc.expectedErrors), len(errs), errs)
@@ -522,5 +545,41 @@ func Test_ToIR(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+func Test_ToIRFailsOnMissingUpstream(t *testing.T) {
+	provider := NewProvider(&i2gw.ProviderConf{})
+	geProvider := provider.(*Provider)
+	geProvider.storage.addVirtualService(&VirtualService{
+		Name:      "example-vs",
+		Namespace: "default",
+		Spec: VirtualServiceSpec{
+			Hosts: []string{"example.com"},
+			VirtualHost: VirtualHost{
+				Routes: []Route{{
+					Matchers: []Matcher{{Prefix: "/api"}},
+					RouteAction: RouteAction{
+						Single: SingleUpstream{
+							Upstream: Upstream{
+								Name:      "missing-upstream",
+								Namespace: "default",
+							},
+						},
+					},
+				}},
+			},
+		},
+	})
+
+	ir, errs := provider.ToIR()
+
+	if len(errs) != 1 {
+		t.Fatalf("Expected 1 error, got %d: %+v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), `upstream: Not found: "default/missing-upstream"`) {
+		t.Fatalf("Expected missing upstream error, got %s", errs[0].Error())
+	}
+	if len(ir.HTTPRoutes) != 0 {
+		t.Fatalf("Expected no HTTPRoutes for malformed upstream, got %+v", ir.HTTPRoutes)
 	}
 }
